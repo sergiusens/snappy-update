@@ -1,0 +1,76 @@
+#!/bin/sh
+
+# TODO: needs to be overridable
+# TODO: contemplate ports
+host="ubuntu@webdm.local"
+
+fail() {
+    echo FAIL: $@
+    exit 1
+}
+
+test_equals() {
+    obtained="$1"
+    expected="$2"
+    msg="$3"
+
+    [ "$obtained" = "$expected" ] || fail "obtained '$obtained' expected '$expected'" $msg
+}
+
+snappy_system="/boot/uboot/snappy-system.txt"
+
+scp $HOME/.ssh/id_rsa.pub $host:.ssh/authorized_keys 2>&1 1>/dev/null
+[ "$?" = 0 ] || exit 1
+
+# Preconditions
+echo Checking preconditions
+snappy_ab=$(ssh $host grep snappy_ab= $snappy_system)
+snappy_mode=$(ssh $host grep snappy_mode= $snappy_system)
+snappy_list=$(ssh $host snappy-go list --updates | grep ubuntu-core | cut -d" " -f1 )
+
+test_equals "$snappy_ab" "snappy_ab=a"
+test_equals "$snappy_mode" "snappy_mode=default"
+test_equals "$snappy_list" "ubuntu-core*" "No updates available"
+
+# Update
+echo Testing update
+ssh $host sudo snappy-go update
+
+snappy_ab=$(ssh $host grep snappy_ab= $snappy_system)
+snappy_mode=$(ssh $host grep snappy_mode= $snappy_system)
+snappy_list=$(ssh $host snappy-go list --updates | grep ubuntu-core | cut -d" " -f1 )
+version_before=$(ssh $host snappy-go list --updates | grep ubuntu-core | cut -d" " -f3 )
+
+test_equals "$snappy_ab" "snappy_ab=b"
+test_equals "$snappy_mode" "snappy_mode=try"
+test_equals "$snappy_list" "ubuntu-core" "There should not be updates available"
+
+# Reboot
+echo rebooting
+ssh $host sudo reboot
+
+echo waiting for boot
+booted=0
+while [ $booted = 0 ]
+do
+    echo sleeping 10s to wait for boot...
+    sleep 10
+    ssh $host ls 2>&1 1>/dev/null
+    [ "$?" = 0 ] && booted=1
+done
+
+# Inspect new system
+echo Inspecting update
+snappy_ab=$(ssh $host grep snappy_ab= $snappy_system)
+snappy_mode=$(ssh $host grep snappy_mode= $snappy_system)
+snappy_list=$(ssh $host snappy-go list --updates | grep ubuntu-core | cut -d" " -f1 )
+version_after=$(ssh $host snappy-go list --updates | grep ubuntu-core | cut -d" " -f3 )
+
+test_equals "$snappy_ab" "snappy_ab=b"
+test_equals "$snappy_mode" "snappy_mode=default"
+test_equals "$snappy_list" "ubuntu-core" "There should not be updates available"
+
+# Summary
+echo "Tests finished successfully"
+echo Version before update $version_before
+echo Version after update $version_after
